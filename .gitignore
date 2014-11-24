@@ -5,3 +5,4 @@ PerformanceTests/TestJSON/obj/
 PerformanceTests/TestJSON/bin/
 PerformanceTests/TestNET/bin/
 PerformanceTests/TestNET/obj/
+*.suo
