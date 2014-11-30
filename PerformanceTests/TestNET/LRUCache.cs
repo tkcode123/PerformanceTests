@@ -6,16 +6,19 @@ using System.Threading.Tasks;
 
 namespace TestNET
 {
-    public interface LRUCache<K,V> where K : IEquatable<K>
+    public interface LRUCacheBase
+    {
+        void Clear();
+        void EvictOldest();
+        int Count { get; }
+        long Size { get; }
+    }
+
+    public interface LRUCache<K,V> : LRUCacheBase where K : IEquatable<K>
     {
         void Add(K k, V v);
         bool TryGetValue(K k, out V v);
         void Remove(K k);
-        void Clear();
-
-        int Count { get; }
-
-        long Size { get; }
     }
 
     public sealed class SizeLimitedLRUCache<K,V> : LRUCache<K,V>, IEqualityComparer<int> where K : IEquatable<K>
@@ -31,14 +34,14 @@ namespace TestNET
         private readonly Dictionary<int, int> index;
         private LRUEntry[] entries;
         private readonly Func<K, V, int> sizeFunc;
-        private readonly Func<int, long, int, bool> evictFunc;
+        private readonly Func<LRUCache<K, V>, int, bool> evictFunc;
         private long size;
         private int posFree;
         private int posFresh;
         private int posOldest;
         private int posYoungest;
 
-        public SizeLimitedLRUCache(int initialSize, Func<K,V,int> sizeFunc, Func<int, long,int,bool> evictFunc) 
+        public SizeLimitedLRUCache(int initialSize, Func<K, V, int> sizeFunc, Func<LRUCacheBase, int, bool> evictFunc) 
         {
             this.index = new Dictionary<int, int>(initialSize, this);
             this.entries = new LRUEntry[Math.Max(4, initialSize)];
@@ -59,7 +62,7 @@ namespace TestNET
             else
             {
                 int addedSize = sizeFunc(k, v);
-                while (this.size > 0 && evictFunc(this.index.Count, this.size, addedSize))
+                while (this.size > 0 && evictFunc(this, addedSize))
                 {
                     EvictOldest();
                 }
@@ -116,6 +119,10 @@ namespace TestNET
             get { return this.size; }
         }
 
+        public void EvictOldest()
+        {
+            Evict(this.posOldest);
+        }
         #endregion
 
         #region LRU/Find methods
@@ -157,11 +164,6 @@ namespace TestNET
                 this.posOldest = this.entries[pos].lruYounger;
             if (this.posYoungest == pos)
                 this.posYoungest = this.entries[pos].lruOlder;
-        }
-
-        private void EvictOldest()
-        {
-            Evict(this.posOldest);
         }
 
         private void Evict(int pos)
@@ -221,5 +223,51 @@ namespace TestNET
         }
 
         #endregion
+
+    }
+
+    public class CombinedCache
+    {
+        private readonly long limit;
+        private readonly SizeLimitedLRUCache<string, Guid> one;
+        private readonly SizeLimitedLRUCache<string, int> two;
+
+        public CombinedCache(long limit)
+        {
+            this.limit = limit;
+            this.one = new SizeLimitedLRUCache<string, Guid>(17, (k, v) => k.Length + 4, DecideEvict);
+            this.two = new SizeLimitedLRUCache<string, int>(17, (k, v) => k.Length + 4, DecideEvict);
+        }
+
+        bool DecideEvict(LRUCacheBase cache, int addedSize)
+        {
+            return (limit + addedSize) > 100;
+        }
+
+        public LRUCache<string, Guid> CacheOne
+        {
+            get { return one; }
+        }
+
+        long TotalSize
+        {
+            get { return one.Size; }
+        }
+
+        public static void Main(string[] args)
+        {
+            var lru = new CombinedCache(5);
+            for (int i = 0; i < 1000000; i++)
+            {
+                Guid g = Guid.NewGuid();
+                lru.CacheOne.Add(g.ToString(), g);
+
+                Guid g2;
+                if (lru.CacheOne.TryGetValue(g.ToString(), out g2) == false)
+                    throw new Exception();
+                if (g2.Equals(g) == false)
+                    throw new Exception();
+            }
+        }
     }
 }
